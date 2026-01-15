@@ -29,7 +29,7 @@ jobs:
     - name: Run go vet
       run: go vet ./...
     - name: Run goimports
-      run: test -z $(find . -name '*.go' -type f | xargs goimports -e -d | tee /dev/stderr)
+      run: test -z "$(find . -name '*.go' -type f | xargs goimports -e -d | tee /dev/stderr)"
     - name: Run staticcheck
       run: staticcheck ./...
 
@@ -77,8 +77,8 @@ jobs:
     # Run tests
     - run: go build -tags k8s
 
-  build:
-    name: "Build Calculator (${{ matrix.target.os }}, ${{ matrix.go-version }})"
+  build-with-old-cli:
+    name: "Build Calculator (with old Fyne CLI) (${{ matrix.target.os }}, ${{ matrix.go-version }})"
     runs-on: ${{ matrix.target.host || 'ubuntu-latest' }}
     env:
       GO111MODULE: on
@@ -96,8 +96,7 @@ jobs:
             args: -app-id calc.sha${{ github.sha }}
           - os: darwin
             args: -app-id calc.sha${{ github.sha }}
-          # Only macos-13 is supported as macos-14 is running in a VM on Mac M1 which are incompatible with docker/podman
-            host: macos-13
+            host: macos-15-intel # docker not supported on arm64 https://github.com/douglascamata/setup-docker-macos-action?tab=readme-ov-file#arm64-processors-m-series-used-on-macos-15-images-and-beyond-are-unsupported
           - os: web
           
           ## Currently not easily supported from GitHub actions.
@@ -140,11 +139,12 @@ jobs:
       - name: Install Fyne
         run: |
           go install fyne.io/fyne/v2/cmd/fyne@latest
+          fyne version
 
       - name: Install Docker
         if: ${{ runner.os == 'macos' }}
-        uses: douglascamata/setup-docker-macos-action@v1-alpha
-    
+        uses: douglascamata/setup-docker-macos-action@v1.1.0
+
       - name: Build
         working-directory: calculator
         run: |
@@ -154,8 +154,8 @@ jobs:
             -debug -no-cache \
             -name calculator${{ matrix.target.ext }}
 
-  build-fyneterm:
-    name: "Build Fyneterm (${{ matrix.target.os }}, ${{ matrix.go-version }})"
+  build-with-new-cli:
+    name: "Build Calculator (with new Fyne CLI) (${{ matrix.target.os }}, ${{ matrix.go-version }})"
     runs-on: ${{ matrix.target.host || 'ubuntu-latest' }}
     env:
       GO111MODULE: on
@@ -173,8 +173,84 @@ jobs:
             args: -app-id calc.sha${{ github.sha }}
           - os: darwin
             args: -app-id calc.sha${{ github.sha }}
-          # Only macos-13 is supported as macos-14 is running in a VM on Mac M1 which are incompatible with docker/podman
-            host: macos-13
+            host: macos-15-intel # docker not supported on arm64 https://github.com/douglascamata/setup-docker-macos-action?tab=readme-ov-file#arm64-processors-m-series-used-on-macos-15-images-and-beyond-are-unsupported
+          - os: web
+          
+          ## Currently not easily supported from GitHub actions.
+          ## https://github.com/fyne-io/fyne-cross/pull/104#issuecomment-1099494308
+          # - os: ios
+          #   args: -app-id calc.sha${{ github.sha }}
+          #   host: macos-latest
+
+    steps:
+      - name: Setup Go environment
+        id: setup-go
+        uses: actions/setup-go@v3
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          path: fyne-cross
+
+      - name: Checkout fyne-io/calculator
+        uses: actions/checkout@v3
+        with:
+          repository: fyne-io/calculator
+          path: calculator
+
+      - name: Cache build artifacts
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+            ~/.cache/fyne-cross
+          key: ${{ runner.os }}-build-cache-${{ hashFiles('**/go.sum') }}
+
+      - name: Install Fyne-cross
+        working-directory: fyne-cross
+        run: go install
+
+      - name: Install Fyne
+        run: |
+          go install fyne.io/tools/cmd/fyne@latest
+          fyne version
+
+      - name: Install Docker
+        if: ${{ runner.os == 'macos' }}
+        uses: douglascamata/setup-docker-macos-action@v1.1.0
+
+      - name: Build
+        working-directory: calculator
+        run: |
+          fyne-cross \
+            ${{ matrix.target.os }} \
+            ${{ matrix.target.args }} \
+            -debug -no-cache \
+            -name calculator${{ matrix.target.ext }}
+
+  build-fyneterm-with-old-cli:
+    name: "Build Fyneterm (with old Fyne CLI) (${{ matrix.target.os }}, ${{ matrix.go-version }})"
+    runs-on: ${{ matrix.target.host || 'ubuntu-latest' }}
+    env:
+      GO111MODULE: on
+    strategy:
+      fail-fast: false
+      matrix:
+        # use max/min supported Go versions
+        go-version: ["1.23.x", "1.19.x"]
+        target:
+          - os: linux
+          - os: windows
+            ext: .exe
+          - os: freebsd
+          - os: android
+            args: -app-id calc.sha${{ github.sha }}
+          - os: darwin
+            args: -app-id calc.sha${{ github.sha }}
+            host: macos-15-intel # docker not supported on arm64 https://github.com/douglascamata/setup-docker-macos-action?tab=readme-ov-file#arm64-processors-m-series-used-on-macos-15-images-and-beyond-are-unsupported
           
           ## Currently not easily supported from GitHub actions.
           ## https://github.com/fyne-io/fyne-cross/pull/104#issuecomment-1099494308
@@ -216,11 +292,88 @@ jobs:
       - name: Install Fyne
         run: |
           go install fyne.io/fyne/v2/cmd/fyne@latest
-
+          fyne version
+ 
       - name: Install Docker
         if: ${{ runner.os == 'macos' }}
-        uses: douglascamata/setup-docker-macos-action@v1-alpha
+        uses: douglascamata/setup-docker-macos-action@v1.1.0
+
+      - name: Build
+        working-directory: terminal
+        run: |
+          fyne-cross \
+            ${{ matrix.target.os }} \
+            ${{ matrix.target.args }} \
+            -debug \
+            -name fyneterm${{ matrix.target.ext }} cmd/fyneterm
+
+  build-fyneterm-with-new-cli:
+    name: "Build Fyneterm (with new Fyne CLI) (${{ matrix.target.os }}, ${{ matrix.go-version }})"
+    runs-on: ${{ matrix.target.host || 'ubuntu-latest' }}
+    env:
+      GO111MODULE: on
+    strategy:
+      fail-fast: false
+      matrix:
+        # use max/min supported Go versions
+        go-version: ["1.23.x", "1.19.x"]
+        target:
+          - os: linux
+          - os: windows
+            ext: .exe
+          - os: freebsd
+          - os: android
+            args: -app-id calc.sha${{ github.sha }}
+          - os: darwin
+            args: -app-id calc.sha${{ github.sha }}
+            host: macos-15-intel # docker not supported on arm64 https://github.com/douglascamata/setup-docker-macos-action?tab=readme-ov-file#arm64-processors-m-series-used-on-macos-15-images-and-beyond-are-unsupported
+          
+          ## Currently not easily supported from GitHub actions.
+          ## https://github.com/fyne-io/fyne-cross/pull/104#issuecomment-1099494308
+          # - os: ios
+          #   args: -app-id calc.sha${{ github.sha }}
+          #   host: macos-latest
+
+    steps:
+      - name: Setup Go environment
+        id: setup-go
+        uses: actions/setup-go@v3
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          path: fyne-cross
+
+      - name: Checkout fyne-io/terminal
+        uses: actions/checkout@v3
+        with:
+          repository: fyne-io/terminal
+          path: terminal
+
+      - name: Cache build artifacts
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+            ~/.cache/fyne-cross
+          key: ${{ runner.os }}-build-cache-${{ hashFiles('**/go.sum') }}
+
+      - name: Install Fyne-cross
+        working-directory: fyne-cross
+        run: go install
+
+      - name: Install Fyne
+        run: |
+          go install fyne.io/tools/cmd/fyne@latest
+          fyne version
  
+      - name: Install Docker
+        if: ${{ runner.os == 'macos' }}
+        uses: douglascamata/setup-docker-macos-action@v1.1.0
+
       - name: Build
         working-directory: terminal
         run: |

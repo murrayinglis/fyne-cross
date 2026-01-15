@@ -177,6 +177,25 @@ func goModInit(ctx Context, image containerImage) error {
 	return nil
 }
 
+func fyneCommandVersionContainer(ctx Context, image containerImage) (string, error) {
+	const versionFileName = "fyne-version.txt"
+
+	versionFileContainer := volume.JoinPathContainer(ctx.TmpDirContainer(), image.ID(), versionFileName)
+	versionFileHost := volume.JoinPathHost(ctx.TmpDirHost(), image.ID(), versionFileName)
+
+	err := image.Run(ctx.Volume, options{}, []string{"sh", "-c", fmt.Sprintf("%s version > %q", fyneBin, versionFileContainer)})
+	if err != nil {
+		return "", err
+	}
+
+	b, err := os.ReadFile(versionFileHost)
+	if err != nil {
+		return "", err
+	}
+
+	return fyneCommandVersionFromOutput(string(b)), nil
+}
+
 func fyneCommandContainer(command string, ctx Context, image containerImage) ([]string, error) {
 	if debugging() {
 		err := image.Run(ctx.Volume, options{}, []string{fyneBin, "version"})
@@ -224,6 +243,18 @@ func fynePackage(ctx Context, image containerImage) error {
 	return nil
 }
 
+// concatNonEmptyNamedArgs returns name and value pairs, filtering out pairs with empty value
+func concatNonEmptyNamedArgs(args ...string) []string {
+	r := []string{}
+	for n := 0; n < len(args)/2; n++ {
+		if args[n*2+1] == "" {
+			continue
+		}
+		r = append(r, args[n*2], args[n*2+1])
+	}
+	return r
+}
+
 // fyneRelease package and release the application using the fyne cli tool
 // Note: at the moment this is used only for the android builds
 func fyneRelease(ctx Context, image containerImage) error {
@@ -232,24 +263,30 @@ func fyneRelease(ctx Context, image containerImage) error {
 		return err
 	}
 
+	keyStoreOpt := "-key-store"
+	keyStorePassOpt := "-key-store-pass"
+	keyPassOpt := "-key-pass"
+	keyNameOpt := "-key-name"
+
+	if fyneCommandVersionCompareContainer(ctx, image, "v2.0.0") >= 0 {
+		keyStoreOpt = "-keyStore"
+		keyStorePassOpt = "-keyStorePass"
+		keyPassOpt = "-keyPass"
+		keyNameOpt = "-keyName"
+	}
+
 	// workDir default value
 	workDir := ctx.WorkDirContainer()
 
 	switch image.OS() {
 	case androidOS:
 		workDir = volume.JoinPathContainer(workDir, ctx.Package)
-		if ctx.Keystore != "" {
-			args = append(args, "-keyStore", ctx.Keystore)
-		}
-		if ctx.KeystorePass != "" {
-			args = append(args, "-keyStorePass", ctx.KeystorePass)
-		}
-		if ctx.KeyPass != "" {
-			args = append(args, "-keyPass", ctx.KeyPass)
-		}
-		if ctx.KeyName != "" {
-			args = append(args, "-keyName", ctx.KeyName)
-		}
+		args = append(args, concatNonEmptyNamedArgs(
+			keyStoreOpt, ctx.Keystore,
+			keyStorePassOpt, ctx.KeystorePass,
+			keyPassOpt, ctx.KeyPass,
+			keyNameOpt, ctx.KeyName,
+		)...)
 	case iosOS:
 		if ctx.Certificate != "" {
 			args = append(args, "-certificate", ctx.Certificate)
